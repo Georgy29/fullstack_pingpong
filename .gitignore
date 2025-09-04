@@ -1,8 +1,11 @@
 # Python
 api/.venv/
 api/__pycache__/
+api/todos.db
+api/.venv/
 api/todos.json
-
+*.pyc
+api/instance/
 # Node
 client/node_modules/
 client/dist/

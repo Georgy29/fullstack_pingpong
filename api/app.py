@@ -1,60 +1,61 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import json, os
+from .db import db
+from .models import Todo
 
-DATA_FILE = os.path.join(os.path.dirname(__file__), "todos.json")
+def create_app():
+    app = Flask(__name__)
+    CORS(app)  # в проде сузишь origins
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todos.db"
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-TODOS = [{"id": 1, "title": "learn git", "done": True}]
-def load():
-    global TODOS
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            TODOS[:] = json.load(f)
-load()
+    db.init_app(app)
+    with app.app_context():
+        db.create_all()
 
-app = Flask(__name__)
-CORS(app)
+    @app.get("/api/ping")
+    def ping():
+        return "pong"
 
+    @app.get("/api/todos")
+    def get_todos():
+        items = Todo.query.order_by(Todo.id.asc()).all()
+        return jsonify([t.to_dict() for t in items])
 
+    @app.post("/api/todos")
+    def add_todo():
+        data = request.get_json(force=True) or {}
+        title = (data.get("title") or "").strip()
+        if not title:
+            return jsonify({"error": "title is required"}), 400
+        todo = Todo(title=title, done=False)
+        db.session.add(todo)
+        db.session.commit()
+        return jsonify(todo.to_dict()), 201
 
-def save():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(TODOS, f, ensure_ascii=False, indent=2)
+    @app.patch("/api/todos/<int:todo_id>")
+    def toggle_todo(todo_id: int):
+        todo = Todo.query.get(todo_id)
+        if not todo:
+            return jsonify({"error": "not found"}), 404
+        todo.done = not todo.done
+        db.session.commit()
+        return jsonify(todo.to_dict())
 
-@app.get("/api/ping")
-def ping():
-    return "pong"
+    @app.delete("/api/todos/<int:todo_id>")
+    def delete_todo(todo_id: int):
+        todo = Todo.query.get(todo_id)
+        if not todo:
+            return jsonify({"error": "not found"}), 404
+        db.session.delete(todo)
+        db.session.commit()
+        return ("", 204)
 
-@app.get("/api/todos")
-def list_todos():
-    return jsonify(TODOS)
+    return app
 
-@app.post("/api/todos")
-def create_todo():
-    data = request.get_json(force=True)
-    new_id = max([t["id"] for t in TODOS] or [0]) + 1
-    todo = {"id": new_id, "title": data.get("title","").strip(), "done": False}
-    TODOS.append(todo)
-    save()
-    return jsonify(todo), 201
-
-@app.patch("/api/todos/<int:todo_id>")
-def toggle_todo(todo_id):
-    for t in TODOS:
-        if t["id"] == todo_id:
-            t["done"] = not t["done"]
-            save()
-            return jsonify(t)
-    return jsonify({"error":"not found"}), 404
-
-@app.delete("/api/todos/<int:todo_id>")
-def delete_todo(todo_id):
-    global TODOS
-    before = len(TODOS)
-    TODOS = [t for t in TODOS if t["id"] != todo_id]
-    save()
-    return ("", 204) if len(TODOS) < before else (jsonify({"error":"not found"}), 404)
-
+# локальный запуск для dev
 if __name__ == "__main__":
-    # в Codespaces нужно биндиться на 0.0.0.0
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    import os
+    app = create_app()
+    port = int(os.environ.get("PORT", 5000))  # Codespaces проксирует этот порт
+    app.run(host="0.0.0.0", port=port, debug=True)
